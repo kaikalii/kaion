@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{fmt, rc::Rc};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Loc {
@@ -17,9 +17,6 @@ impl Span {
     pub fn new(start: Loc, end: Loc) -> Self {
         Self { start, end }
     }
-    pub fn sp<T>(self, value: T) -> Sp<T> {
-        Sp { span: self, value }
-    }
     pub fn merge(self, other: Self) -> Self {
         Self {
             start: self.start,
@@ -28,21 +25,17 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Sp<T> {
-    pub span: Span,
-    pub value: T,
-}
-
 pub type Ident = Rc<str>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LexError {
-    InvalidChar(char),
+    InvalidChar(char, Span),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
+    Nil,
+    Bool(bool),
     Ident(Ident),
     BinOp(BinOp),
     Number(Ident),
@@ -56,6 +49,44 @@ pub enum Token {
     Dot,
     Colon,
     Equals,
+    If,
+    Else,
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::Nil => write!(f, "nil"),
+            Token::Bool(b) => write!(f, "{b}"),
+            Token::Ident(ident) => {
+                if f.alternate() {
+                    write!(f, "identifier")
+                } else {
+                    write!(f, "{ident}")
+                }
+            }
+            Token::BinOp(binop) => write!(f, "{binop}"),
+            Token::Number(number) => {
+                if f.alternate() {
+                    write!(f, "number")
+                } else {
+                    write!(f, "{number}")
+                }
+            }
+            Token::OpenParen => write!(f, "("),
+            Token::CloseParen => write!(f, ")"),
+            Token::OpenBracket => write!(f, "["),
+            Token::CloseBracket => write!(f, "]"),
+            Token::OpenCurly => write!(f, "{{"),
+            Token::CloseCurly => write!(f, "}}"),
+            Token::Comma => write!(f, ","),
+            Token::Dot => write!(f, "."),
+            Token::Colon => write!(f, ":"),
+            Token::Equals => write!(f, "="),
+            Token::If => write!(f, "if"),
+            Token::Else => write!(f, "else"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -73,7 +104,26 @@ pub enum BinOp {
     Ge,
 }
 
-pub fn lex(input: &str) -> Result<Vec<Sp<Token>>, LexError> {
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use BinOp::*;
+        match self {
+            Add => write!(f, "+"),
+            Sub => write!(f, "-"),
+            Mul => write!(f, "*"),
+            Div => write!(f, "/"),
+            Rem => write!(f, "%"),
+            Eq => write!(f, "=="),
+            Ne => write!(f, "!="),
+            Lt => write!(f, "<"),
+            Le => write!(f, "<="),
+            Gt => write!(f, ">"),
+            Ge => write!(f, ">="),
+        }
+    }
+}
+
+pub fn lex(input: &str) -> Result<Vec<(Token, Span)>, LexError> {
     Lexer {
         chars: input.chars().collect(),
         loc: Loc {
@@ -95,7 +145,7 @@ struct Lexer {
     chars: Vec<char>,
     loc: Loc,
     start: Loc,
-    tokens: Vec<Sp<Token>>,
+    tokens: Vec<(Token, Span)>,
 }
 
 impl Lexer {
@@ -122,12 +172,9 @@ impl Lexer {
         self.next_if(|x| x == c).is_some()
     }
     fn add(&mut self, token: Token) {
-        self.tokens.push(Sp {
-            span: Span::new(self.start, self.loc),
-            value: token,
-        });
+        self.tokens.push((token, Span::new(self.start, self.loc)));
     }
-    fn lex(mut self) -> Result<Vec<Sp<Token>>, LexError> {
+    fn lex(mut self) -> Result<Vec<(Token, Span)>, LexError> {
         loop {
             self.start = self.loc;
             if let Some(c) = self.next() {
@@ -169,10 +216,17 @@ impl Lexer {
                         {
                             ident.push(c);
                         }
-                        self.add(Token::Ident(Rc::from(ident)));
+                        self.add(match ident.as_str() {
+                            "nil" => Token::Nil,
+                            "true" => Token::Bool(true),
+                            "false" => Token::Bool(false),
+                            "if" => Token::If,
+                            "else" => Token::Else,
+                            _ => Token::Ident(Rc::from(ident)),
+                        });
                     }
                     c if c.is_whitespace() => {}
-                    c => return Err(LexError::InvalidChar(c)),
+                    c => return Err(LexError::InvalidChar(c, Span::new(self.start, self.loc))),
                 }
             } else {
                 break;
